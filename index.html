@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Investor Ledger</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body style="margin:0;padding:0;background:#16232E;">
+
+<!-- ── Login overlay ── -->
+<div id="loginOverlay" style="display:flex;min-height:100vh;align-items:center;justify-content:center;background:#16232E;">
+  <div style="background:#1e2e3a;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:36px 32px;width:100%;max-width:360px;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;box-sizing:border-box;">
+    <div style="font-family:'IBM Plex Mono','SF Mono',monospace;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#9FB3B0;margin-bottom:8px;">Fundraise Tracker</div>
+    <h1 style="font-family:'Source Serif 4','Georgia',serif;font-size:24px;font-weight:600;color:#EDEFEA;margin:0 0 24px;letter-spacing:-0.01em;">The Investor Ledger</h1>
+    <div style="margin-bottom:14px;">
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#9FB3B0;margin-bottom:5px;font-weight:600;">Email</label>
+      <input type="email" id="loginEmail" placeholder="you@example.com" style="width:100%;font-size:14px;padding:10px 12px;border:1px solid rgba(255,255,255,0.16);border-radius:4px;background:rgba(255,255,255,0.06);color:#EDEFEA;outline:none;box-sizing:border-box;">
+    </div>
+    <div style="margin-bottom:20px;">
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#9FB3B0;margin-bottom:5px;font-weight:600;">Password</label>
+      <input type="password" id="loginPassword" placeholder="••••••••" style="width:100%;font-size:14px;padding:10px 12px;border:1px solid rgba(255,255,255,0.16);border-radius:4px;background:rgba(255,255,255,0.06);color:#EDEFEA;outline:none;box-sizing:border-box;">
+    </div>
+    <button id="loginBtn" style="width:100%;font-family:inherit;font-size:14px;font-weight:600;padding:11px;border-radius:4px;border:none;background:#1F5C4E;color:#fff;cursor:pointer;">Sign in</button>
+    <div id="loginError" style="color:#A13D3D;font-size:12px;margin-top:10px;min-height:16px;"></div>
+  </div>
+</div>
+
+<!-- ── Main app (hidden until logged in) ── -->
+<div class="ledger-root" style="display:none;">
+  <div class="ledger-header">
+    <div style="position:absolute;top:16px;right:20px;">
+      <button id="signOutBtn" style="font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;font-size:11px;padding:5px 10px;border-radius:3px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:#9FB3B0;cursor:pointer;">Sign out</button>
+    </div>
+    <div class="ledger-eyebrow">Fundraise Tracker</div>
+    <h1 class="ledger-title">The Investor Ledger</h1>
+    <div class="ledger-sub">Every enquiry from email and WhatsApp, in one place — tagged by sector, mapped to equity or debt, and tracked company-by-company so you know exactly who's been pitched what.</div>
+    <div class="stats-row" id="statsRow"></div>
+  </div>
+
+  <div class="ledger-body">
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search by name, firm, company, or notes...">
+      <select id="typeFilter">
+        <option value="all">All types</option>
+        <option value="Equity">Equity</option>
+        <option value="Debt">Debt</option>
+        <option value="Both">Equity + Debt</option>
+      </select>
+      <select id="sectorFilter"><option value="all">All sectors</option></select>
+      <select id="companyFilter"><option value="all">All companies</option></select>
+      <select id="statusFilter">
+        <option value="all">All statuses</option>
+        <option value="New">New</option>
+        <option value="Contacted">Contacted</option>
+        <option value="In Discussion">In Discussion</option>
+        <option value="Term Sheet">Term Sheet</option>
+        <option value="Committed">Committed</option>
+        <option value="Passed">Passed</option>
+        <option value="Dormant">Dormant</option>
+      </select>
+      <select id="sortBy">
+        <option value="newest">Newest first</option>
+        <option value="name">Name A–Z</option>
+        <option value="lastContact">Last contact</option>
+      </select>
+      <button class="btn btn-primary" id="addNewBtn">+ Add investor</button>
+      <button class="btn btn-ghost" id="exportBtn">Export CSV</button>
+    </div>
+
+    <div class="panel" id="formPanel" style="display:none;"></div>
+
+    <div class="list-meta">
+      <span id="resultsCount">Loading...</span>
+      <button class="btn-danger-text" id="clearAllBtn" style="display:none;">Clear all data</button>
+    </div>
+
+    <div id="listContainer"></div>
+  </div>
+</div>
+
+<datalist id="companyDatalist"></datalist>
+<div class="toast" id="toast"></div>
+
+<style>
+  :root{
+    --ink:#16232E;--ink-soft:#3C4A56;--paper:#EDEFEA;--paper-card:#F8F8F4;
+    --line:#D8D9CF;--equity:#2B5C8A;--equity-bg:#E4ECF3;--debt:#9C6327;
+    --debt-bg:#F1E5D3;--both-bg:#E7E4EF;--both:#5B4B8A;--accent:#1F5C4E;
+    --accent-bg:#DFEAE6;--danger:#A13D3D;
+    --font-display:'Source Serif 4','Georgia',serif;
+    --font-body:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;
+    --font-mono:'IBM Plex Mono','SF Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  .ledger-root{font-family:var(--font-body);color:var(--ink);background:var(--paper);min-height:100vh;padding:0;-webkit-font-smoothing:antialiased;}
+  .ledger-header{background:var(--ink);color:var(--paper);padding:28px 28px 22px;position:relative;overflow:hidden;}
+  .ledger-header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:repeating-linear-gradient(90deg,var(--accent) 0 18px,transparent 18px 26px);opacity:0.55;}
+  .ledger-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#9FB3B0;margin-bottom:6px;}
+  .ledger-title{font-family:var(--font-display);font-size:30px;font-weight:600;margin:0 0 4px;letter-spacing:-0.01em;}
+  .ledger-sub{font-size:13.5px;color:#B9C4C0;max-width:560px;line-height:1.5;}
+  .stats-row{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;}
+  .stat-chip{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:3px;padding:8px 14px;min-width:92px;}
+  .stat-num{font-family:var(--font-mono);font-size:19px;font-weight:600;line-height:1;}
+  .stat-label{font-size:10.5px;text-transform:uppercase;letter-spacing:0.08em;color:#9FB3B0;margin-top:4px;}
+  .ledger-body{padding:22px 28px 60px;max-width:1180px;margin:0 auto;}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;background:var(--paper-card);border:1px solid var(--line);border-radius:6px;padding:12px;}
+  .toolbar input[type=text],.toolbar select{font-family:var(--font-body);font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink);}
+  .toolbar input[type=text]{flex:1;min-width:180px;}
+  .btn{font-family:var(--font-body);font-size:13px;font-weight:600;padding:9px 16px;border-radius:4px;border:1px solid transparent;cursor:pointer;transition:transform .08s ease,opacity .12s ease;}
+  .btn:active{transform:scale(0.97);}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-primary:hover{opacity:0.92;}
+  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--ink-soft);}
+  .btn-ghost:hover{background:#fff;}
+  .btn-danger-text{background:transparent;color:var(--danger);border:none;font-size:12px;padding:4px 6px;}
+  .panel{background:var(--paper-card);border:1px solid var(--line);border-radius:6px;padding:20px;margin-bottom:18px;}
+  .panel h3{font-family:var(--font-display);font-size:18px;margin:0 0 14px;}
+  .panel h4{font-family:var(--font-display);font-size:15px;margin:18px 0 10px;padding-top:14px;border-top:1px dashed var(--line);}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;}
+  .form-grid .full{grid-column:1/-1;}
+  .field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-soft);margin-bottom:5px;font-weight:600;}
+  .field input,.field select,.field textarea{width:100%;font-family:var(--font-body);font-size:13.5px;padding:9px 10px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink);}
+  .field textarea{resize:vertical;min-height:56px;}
+  .type-toggle{display:flex;gap:8px;}
+  .type-toggle label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 8px;border:1px solid var(--line);border-radius:4px;font-size:13px;cursor:pointer;background:#fff;font-weight:600;}
+  .type-toggle input{margin:0;}
+  .type-toggle label.active-equity{background:var(--equity-bg);border-color:var(--equity);color:var(--equity);}
+  .type-toggle label.active-debt{background:var(--debt-bg);border-color:var(--debt);color:var(--debt);}
+  .type-toggle label.active-both{background:var(--both-bg);border-color:var(--both);color:var(--both);}
+  .sector-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .chip-toggle{font-size:12px;padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--ink-soft);user-select:none;}
+  .chip-toggle.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .add-sector-row{display:flex;gap:6px;margin-top:8px;}
+  .add-sector-row input{flex:1;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:4px;}
+  .add-sector-row button{font-size:12px;padding:6px 10px;border-radius:4px;border:1px solid var(--line);background:#fff;cursor:pointer;}
+  .form-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;}
+  .list-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:12.5px;color:var(--ink-soft);}
+  .investor-card{background:var(--paper-card);border:1px solid var(--line);border-radius:6px;padding:16px 18px;margin-bottom:10px;position:relative;}
+  .investor-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}
+  .investor-name{font-family:var(--font-display);font-size:17px;font-weight:600;margin:0;}
+  .investor-firm{font-size:12.5px;color:var(--ink-soft);margin-top:1px;}
+  .investor-contact{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  .badge-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+  .type-badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:3px;text-transform:uppercase;letter-spacing:0.04em;}
+  .type-badge.equity{background:var(--equity-bg);color:var(--equity);}
+  .type-badge.debt{background:var(--debt-bg);color:var(--debt);}
+  .type-badge.both{background:var(--both-bg);color:var(--both);}
+  .stamp{font-family:var(--font-mono);font-size:10.5px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;padding:4px 10px;border:1.5px solid currentColor;border-radius:3px;transform:rotate(-1.2deg);display:inline-block;}
+  .stamp.new{color:#5B6B72;}.stamp.contacted{color:#2B5C8A;}.stamp.discussion{color:#9C6327;}
+  .stamp.termsheet{color:#7A5BA6;}.stamp.committed{color:#1F5C4E;}.stamp.passed{color:#A13D3D;}
+  .stamp.dormant{color:#8A8A80;}.stamp.notpitched{color:#8A8A80;}.stamp.pitched{color:#2B5C8A;}.stamp.declined{color:#A13D3D;}
+  .sector-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;}
+  .sector-tag{font-size:11px;padding:3px 9px;background:#fff;border:1px solid var(--line);border-radius:20px;color:var(--ink-soft);}
+  .investor-meta-row{display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--ink-soft);flex-wrap:wrap;}
+  .investor-meta-row strong{color:var(--ink);}
+  .investor-notes{font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;border-top:1px dashed var(--line);padding-top:8px;}
+  .investor-actions{position:absolute;top:14px;right:16px;display:flex;gap:4px;}
+  .icon-btn{background:transparent;border:1px solid var(--line);border-radius:4px;font-size:11px;padding:5px 9px;cursor:pointer;color:var(--ink-soft);}
+  .icon-btn:hover{background:#fff;}
+  .engagement-block{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px;}
+  .engagement-block-title{font-size:10.5px;text-transform:uppercase;letter-spacing:0.07em;color:var(--ink-soft);font-weight:700;margin-bottom:8px;}
+  .engagement-row{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:4px;padding:7px 10px;margin-bottom:6px;font-size:12.5px;flex-wrap:wrap;}
+  .engagement-row .co-name{font-weight:700;min-width:110px;}
+  .engagement-row .eg-date{color:var(--ink-soft);font-family:var(--font-mono);font-size:11px;}
+  .engagement-row .eg-notes{flex-basis:100%;color:var(--ink-soft);font-size:12px;margin-top:2px;}
+  .form-eg-row{display:grid;grid-template-columns:1.2fr 1fr 0.9fr 1.6fr auto;gap:8px;align-items:start;margin-bottom:8px;}
+  .form-eg-row input,.form-eg-row select{font-size:12.5px;padding:7px 8px;border:1px solid var(--line);border-radius:4px;}
+  .form-eg-row button{background:transparent;border:1px solid var(--line);color:var(--danger);border-radius:4px;font-size:12px;padding:7px 9px;cursor:pointer;height:100%;}
+  .add-eg-btn{font-size:12.5px;padding:7px 12px;border-radius:4px;border:1px solid var(--line);background:#fff;cursor:pointer;margin-top:2px;}
+  .empty-state{text-align:center;padding:50px 20px;color:var(--ink-soft);}
+  .empty-state h4{font-family:var(--font-display);font-size:19px;color:var(--ink);margin-bottom:6px;}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:4px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:50;}
+  .toast.show{opacity:1;}
+  @media(max-width:640px){
+    .form-grid{grid-template-columns:1fr;}
+    .ledger-header{padding:20px 16px;}
+    .ledger-body{padding:16px;}
+    .form-eg-row{grid-template-columns:1fr;}
+  }
+</style>
+
+<!-- ── App script ── -->
+<script>
+(function(){
+  const DEFAULT_SECTORS = ["Fintech","Healthtech","SaaS/B2B","Consumer/D2C","Agritech","Climate/CleanTech","Manufacturing","Deeptech","EdTech","Logistics","Real Estate","Media/Content"];
+  const ENGAGEMENT_STATUSES = ["Not Yet Pitched","Pitched","In Discussion","Term Sheet","Committed","Declined"];
+  const STORAGE_KEY = "investors:list";
+  const SECTOR_KEY  = "investors:custom-sectors";
+  const COMPANY_KEY = "investors:companies";
+
+  let investors = [], customSectors = [], companies = [];
+  let editingId = null, selectedSectors = [], selectedType = "Equity", formEngagements = [], loaded = false;
+
+  const $ = (sel) => document.querySelector(sel);
+  const listContainer = $("#listContainer");
+  const formPanel     = $("#formPanel");
+  const statsRow      = $("#statsRow");
+  const toast         = $("#toast");
+
+  function showToast(msg){
+    toast.textContent = msg;
+    toast.classList.add("show");
+    setTimeout(()=>toast.classList.remove("show"), 1800);
+  }
+
+  function uid(prefix){ return (prefix||'id')+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,8); }
+  function allSectors(){ return Array.from(new Set([...DEFAULT_SECTORS,...customSectors])); }
+
+  async function loadData(){
+    listContainer.innerHTML = '<div class="empty-state">Loading your ledger...</div>';
+    try{ const r = await window.storage.get(STORAGE_KEY); investors = r&&r.value ? JSON.parse(r.value) : []; investors.forEach(i=>{ if(!Array.isArray(i.engagements)) i.engagements=[]; }); }catch(e){ investors=[]; }
+    try{ const r = await window.storage.get(SECTOR_KEY);  customSectors = r&&r.value ? JSON.parse(r.value) : []; }catch(e){ customSectors=[]; }
+    try{ const r = await window.storage.get(COMPANY_KEY); companies = r&&r.value ? JSON.parse(r.value) : []; }catch(e){ companies=[]; }
+    loaded = true;
+    populateSectorFilter(); populateCompanyFilter(); populateCompanyDatalist(); render();
+  }
+
+  async function saveInvestors(){ try{ await window.storage.set(STORAGE_KEY, JSON.stringify(investors)); }catch(e){ showToast("Couldn't save — try again"); } }
+  async function saveCustomSectors(){ try{ await window.storage.set(SECTOR_KEY,  JSON.stringify(customSectors)); }catch(e){} }
+  async function saveCompanies(){     try{ await window.storage.set(COMPANY_KEY, JSON.stringify(companies)); }catch(e){} }
+
+  function populateSectorFilter(){
+    const sel = $("#sectorFilter"), cur = sel.value;
+    sel.innerHTML = '<option value="all">All sectors</option>' + allSectors().map(s=>`<option value="${escA(s)}">${escH(s)}</option>`).join('');
+    sel.value = cur && [...sel.options].some(o=>o.value===cur) ? cur : "all";
+  }
+  function populateCompanyFilter(){
+    const sel = $("#companyFilter"), cur = sel.value;
+    sel.innerHTML = '<option value="all">All companies</option>' + companies.map(c=>`<option value="${escA(c)}">${escH(c)}</option>`).join('');
+    sel.value = cur && [...sel.options].some(o=>o.value===cur) ? cur : "all";
+  }
+  function populateCompanyDatalist(){
+    document.getElementById('companyDatalist').innerHTML = companies.map(c=>`<option value="${escA(c)}">`).join('');
+  }
+
+  function escH(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function escA(s){ return escH(s); }
+
+  function stampClass(st){ return {"New":"new","Contacted":"contacted","In Discussion":"discussion","Term Sheet":"termsheet","Committed":"committed","Passed":"passed","Dormant":"dormant","Not Yet Pitched":"notpitched","Pitched":"pitched","Declined":"declined"}[st]||"new"; }
+  function typeClass(t){ return t==="Equity"?"equity":t==="Debt"?"debt":"both"; }
+
+  function renderStats(){
+    const total=investors.length, eq=investors.filter(i=>i.type==="Equity"||i.type==="Both").length, db=investors.filter(i=>i.type==="Debt"||i.type==="Both").length;
+    let ae=0; investors.forEach(i=>(i.engagements||[]).forEach(e=>{ if(e.status&&!['Not Yet Pitched','Declined'].includes(e.status)) ae++; }));
+    statsRow.innerHTML=`<div class="stat-chip"><div class="stat-num">${total}</div><div class="stat-label">Investors</div></div><div class="stat-chip"><div class="stat-num">${eq}</div><div class="stat-label">Equity</div></div><div class="stat-chip"><div class="stat-num">${db}</div><div class="stat-label">Debt</div></div><div class="stat-chip"><div class="stat-num">${companies.length}</div><div class="stat-label">Companies</div></div><div class="stat-chip"><div class="stat-num">${ae}</div><div class="stat-label">Active pitches</div></div>`;
+  }
+
+  function getFiltered(){
+    const q=$("#searchInput").value.trim().toLowerCase(), typeF=$("#typeFilter").value, sectorF=$("#sectorFilter").value, companyF=$("#companyFilter").value, statusF=$("#statusFilter").value, sortBy=$("#sortBy").value;
+    let list=investors.filter(inv=>{
+      if(q){ const h=[inv.name,inv.firm,inv.notes,inv.contact,(inv.engagements||[]).map(e=>e.company).join(' ')].join(' ').toLowerCase(); if(!h.includes(q)) return false; }
+      if(typeF!=="all"&&inv.type!==typeF) return false;
+      if(sectorF!=="all"&&!(inv.sectors||[]).includes(sectorF)) return false;
+      if(companyF!=="all"&&!(inv.engagements||[]).some(e=>e.company===companyF)) return false;
+      if(statusF!=="all"&&inv.status!==statusF) return false;
+      return true;
+    });
+    list.sort((a,b)=>{ if(sortBy==="name") return (a.name||'').localeCompare(b.name||''); if(sortBy==="lastContact") return (b.lastContact||'').localeCompare(a.lastContact||''); return (b.dateAdded||'').localeCompare(a.dateAdded||''); });
+    return list;
+  }
+
+  function render(){
+    renderStats();
+    const filtered=getFiltered();
+    $("#resultsCount").textContent=loaded?`${filtered.length} of ${investors.length} investor${investors.length===1?'':'s'}`:'Loading...';
+    $("#clearAllBtn").style.display=investors.length?'inline-block':'none';
+    if(!loaded) return;
+    if(filtered.length===0){ listContainer.innerHTML=investors.length===0?`<div class="empty-state"><h4>No investors yet</h4>Add the first contact from your inbox or WhatsApp — takes about 20 seconds.</div>`:`<div class="empty-state"><h4>No matches</h4>Try clearing a filter or search term.</div>`; return; }
+    listContainer.innerHTML=filtered.map(inv=>`
+      <div class="investor-card">
+        <div class="investor-actions"><button class="icon-btn" data-edit="${inv.id}">Edit</button><button class="icon-btn" data-delete="${inv.id}">Delete</button></div>
+        <div class="investor-top"><div>
+          <p class="investor-name">${escH(inv.name||'Unnamed')}</p>
+          <div class="investor-firm">${escH(inv.firm||'—')}</div>
+          <div class="investor-contact">${escH(inv.contact||'no contact on file')}</div>
+        </div></div>
+        <div class="badge-row" style="margin-top:10px;">
+          <span class="type-badge ${typeClass(inv.type)}">${escH(inv.type)}</span>
+          <span class="stamp ${stampClass(inv.status)}">${escH(inv.status)}</span>
+          ${inv.source?`<span class="sector-tag">via ${escH(inv.source)}</span>`:''}
+        </div>
+        ${(inv.sectors||[]).length?`<div class="sector-tags">${inv.sectors.map(s=>`<span class="sector-tag">${escH(s)}</span>`).join('')}</div>`:''}
+        <div class="investor-meta-row">
+          ${inv.ticketSize?`<span><strong>Ticket:</strong> ${escH(inv.ticketSize)}</span>`:''}
+          ${inv.stage?`<span><strong>Stage:</strong> ${escH(inv.stage)}</span>`:''}
+          ${inv.dateAdded?`<span><strong>Added:</strong> ${escH(inv.dateAdded)}</span>`:''}
+          ${inv.lastContact?`<span><strong>Last contact:</strong> ${escH(inv.lastContact)}</span>`:''}
+        </div>
+        ${inv.notes?`<div class="investor-notes">${escH(inv.notes)}</div>`:''}
+        ${(inv.engagements||[]).length?`<div class="engagement-block"><div class="engagement-block-title">Companies pitched (${inv.engagements.length})</div>${inv.engagements.map(e=>`<div class="engagement-row"><span class="co-name">${escH(e.company||'—')}</span><span class="stamp ${stampClass(e.status)}">${escH(e.status||'Not Yet Pitched')}</span>${e.dateContacted?`<span class="eg-date">${escH(e.dateContacted)}</span>`:''} ${e.notes?`<span class="eg-notes">${escH(e.notes)}</span>`:''}</div>`).join('')}</div>`:''}
+      </div>`).join('');
+    listContainer.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>openForm(b.getAttribute('data-edit'))));
+    listContainer.querySelectorAll('[data-delete]').forEach(b=>b.addEventListener('click',()=>deleteInvestor(b.getAttribute('data-delete'))));
+  }
+
+  function renderSectorChips(){
+    const wrap=document.getElementById('sectorChipsWrap'); if(!wrap) return;
+    wrap.innerHTML=allSectors().map(s=>`<span class="chip-toggle ${selectedSectors.includes(s)?'on':''}" data-sector="${escA(s)}">${escH(s)}</span>`).join('');
+    wrap.querySelectorAll('[data-sector]').forEach(c=>c.addEventListener('click',()=>{ const s=c.getAttribute('data-sector'); selectedSectors.includes(s)?selectedSectors=selectedSectors.filter(x=>x!==s):selectedSectors.push(s); renderSectorChips(); }));
+  }
+
+  function renderEngagementRows(){
+    const wrap=document.getElementById('engagementRowsWrap'); if(!wrap) return;
+    if(!formEngagements.length){ wrap.innerHTML=`<div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">No companies linked yet — add one below.</div>`; return; }
+    wrap.innerHTML=formEngagements.map(e=>`<div class="form-eg-row" data-row="${e.rowId}"><input type="text" list="companyDatalist" placeholder="Company name" value="${escA(e.company||'')}" data-field="company"><select data-field="status">${ENGAGEMENT_STATUSES.map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}</select><input type="date" value="${escA(e.dateContacted||'')}" data-field="dateContacted"><input type="text" placeholder="Progress notes..." value="${escA(e.notes||'')}" data-field="notes"><button type="button" data-remove-row="${e.rowId}" title="Remove">✕</button></div>`).join('');
+    wrap.querySelectorAll('.form-eg-row').forEach(rowEl=>{ const rid=rowEl.getAttribute('data-row'); rowEl.querySelectorAll('[data-field]').forEach(inp=>inp.addEventListener('input',()=>{ const eg=formEngagements.find(e=>e.rowId===rid); if(eg) eg[inp.getAttribute('data-field')]=inp.value; })); });
+    wrap.querySelectorAll('[data-remove-row]').forEach(b=>b.addEventListener('click',()=>{ formEngagements=formEngagements.filter(e=>e.rowId!==b.getAttribute('data-remove-row')); renderEngagementRows(); }));
+  }
+
+  function addEngagementRow(){ formEngagements.push({rowId:uid('row'),company:'',status:'Not Yet Pitched',dateContacted:'',notes:''}); renderEngagementRows(); }
+
+  function openForm(id){
+    editingId=id||null;
+    const inv=id?investors.find(i=>i.id===id):null;
+    selectedSectors=inv?[...(inv.sectors||[])]:[];
+    selectedType=inv?inv.type:"Equity";
+    formEngagements=inv?(inv.engagements||[]).map(e=>({...e,rowId:uid('row')})):[];
+    formPanel.style.display='block';
+    formPanel.innerHTML=`<h3>${inv?'Edit investor':'Add investor'}</h3><div class="form-grid"><div class="field"><label>Name *</label><input type="text" id="f_name" value="${inv?escA(inv.name||''):''}" placeholder="e.g. Rahul Mehta"></div><div class="field"><label>Firm / Fund</label><input type="text" id="f_firm" value="${inv?escA(inv.firm||''):''}" placeholder="e.g. Blue Harbor Capital"></div><div class="field"><label>Email / Phone</label><input type="text" id="f_contact" value="${inv?escA(inv.contact||''):''}" placeholder="email@example.com"></div><div class="field"><label>Source</label><select id="f_source">${["Email","WhatsApp","Referral","LinkedIn","Event","Other"].map(s=>`<option value="${s}" ${inv&&inv.source===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field full"><label>Looking for</label><div class="type-toggle" id="typeToggle"><label class="${selectedType==='Equity'?'active-equity':''}" data-type="Equity"><input type="radio" name="ftype" ${selectedType==='Equity'?'checked':''}> Equity</label><label class="${selectedType==='Debt'?'active-debt':''}" data-type="Debt"><input type="radio" name="ftype" ${selectedType==='Debt'?'checked':''}> Debt</label><label class="${selectedType==='Both'?'active-both':''}" data-type="Both"><input type="radio" name="ftype" ${selectedType==='Both'?'checked':''}> Both</label></div></div><div class="field"><label>Ticket size</label><input type="text" id="f_ticket" value="${inv?escA(inv.ticketSize||''):''}" placeholder="e.g. $1–5M"></div><div class="field"><label>Stage / Preference</label><input type="text" id="f_stage" value="${inv?escA(inv.stage||''):''}" placeholder="e.g. Series A"></div><div class="field"><label>Overall status</label><select id="f_status">${["New","Contacted","In Discussion","Term Sheet","Committed","Passed","Dormant"].map(s=>`<option value="${s}" ${inv&&inv.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Last contact date</label><input type="date" id="f_lastcontact" value="${inv?escA(inv.lastContact||''):''}"></div><div class="field full"><label>Sectoral interests</label><div class="sector-chips" id="sectorChipsWrap"></div><div class="add-sector-row"><input type="text" id="f_newsector" placeholder="Add a custom sector and press Enter"><button type="button" id="addSectorBtn">Add</button></div></div><div class="field full"><label>General notes</label><textarea id="f_notes" placeholder="Context from the email/WhatsApp thread...">${inv?escH(inv.notes||''):''}</textarea></div></div><h4>Companies pitched to this investor</h4><div id="engagementRowsWrap"></div><button type="button" class="add-eg-btn" id="addEgBtn">+ Add a company</button><div class="form-actions"><button class="btn btn-ghost" id="cancelFormBtn">Cancel</button><button class="btn btn-primary" id="saveFormBtn">${inv?'Save changes':'Add investor'}</button></div>`;
+    renderSectorChips(); renderEngagementRows();
+    formPanel.querySelectorAll('#typeToggle label').forEach(lbl=>lbl.addEventListener('click',()=>{ selectedType=lbl.getAttribute('data-type'); formPanel.querySelectorAll('#typeToggle label').forEach(l=>l.classList.remove('active-equity','active-debt','active-both')); lbl.classList.add(selectedType==='Equity'?'active-equity':selectedType==='Debt'?'active-debt':'active-both'); }));
+    document.getElementById('addSectorBtn').addEventListener('click',addCustomSector);
+    document.getElementById('f_newsector').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();addCustomSector();} });
+    document.getElementById('addEgBtn').addEventListener('click',addEngagementRow);
+    document.getElementById('cancelFormBtn').addEventListener('click',closeForm);
+    document.getElementById('saveFormBtn').addEventListener('click',submitForm);
+    formPanel.scrollIntoView({behavior:'smooth',block:'start'});
+  }
+
+  async function addCustomSector(){
+    const input=document.getElementById('f_newsector'), val=input.value.trim(); if(!val) return;
+    if(!allSectors().includes(val)){ customSectors.push(val); await saveCustomSectors(); populateSectorFilter(); }
+    if(!selectedSectors.includes(val)) selectedSectors.push(val);
+    input.value=''; renderSectorChips();
+  }
+
+  function closeForm(){ formPanel.style.display='none'; formPanel.innerHTML=''; editingId=null; formEngagements=[]; }
+
+  async function submitForm(){
+    const name=document.getElementById('f_name').value.trim(); if(!name){ showToast("Name is required"); return; }
+    const cleanEg=formEngagements.filter(e=>e.company&&e.company.trim()).map(e=>({id:e.id||uid('eg'),company:e.company.trim(),status:e.status||'Not Yet Pitched',dateContacted:e.dateContacted||'',notes:(e.notes||'').trim()}));
+    let newCo=false; cleanEg.forEach(e=>{ if(!companies.includes(e.company)){companies.push(e.company);newCo=true;} });
+    if(newCo){ await saveCompanies(); populateCompanyFilter(); populateCompanyDatalist(); }
+    const data={ id:editingId||uid('inv'), name, firm:document.getElementById('f_firm').value.trim(), contact:document.getElementById('f_contact').value.trim(), source:document.getElementById('f_source').value, type:selectedType, sectors:[...selectedSectors], ticketSize:document.getElementById('f_ticket').value.trim(), stage:document.getElementById('f_stage').value.trim(), status:document.getElementById('f_status').value, lastContact:document.getElementById('f_lastcontact').value, notes:document.getElementById('f_notes').value.trim(), engagements:cleanEg, dateAdded:editingId?(investors.find(i=>i.id===editingId)||{}).dateAdded:new Date().toISOString().slice(0,10) };
+    if(editingId){ investors=investors.map(i=>i.id===editingId?data:i); showToast("Investor updated"); } else { investors.unshift(data); showToast("Investor added"); }
+    await saveInvestors(); populateSectorFilter(); closeForm(); render();
+  }
+
+  async function deleteInvestor(id){
+    const inv=investors.find(i=>i.id===id); if(!inv) return;
+    if(!confirm(`Remove ${inv.name} from your ledger?`)) return;
+    investors=investors.filter(i=>i.id!==id); await saveInvestors(); render(); showToast("Removed");
+  }
+
+  async function clearAll(){
+    if(!confirm("This will permanently delete all investors. Continue?")) return;
+    investors=[]; await saveInvestors(); render(); showToast("Ledger cleared");
+  }
+
+  function exportCSV(){
+    if(!investors.length){ showToast("Nothing to export yet"); return; }
+    const cols=["name","firm","contact","source","type","sectors","ticketSize","stage","status","dateAdded","lastContact","notes","companiesPitched"];
+    const rows=[cols.join(",")];
+    investors.forEach(inv=>{ const row=cols.map(c=>{ let v; if(c==='sectors') v=(inv.sectors||[]).join('; '); else if(c==='companiesPitched') v=(inv.engagements||[]).map(e=>`${e.company} [${e.status}]${e.notes?' - '+e.notes:''}`).join(' | '); else v=(inv[c]||''); return `"${String(v).replace(/"/g,'""')}"`; }); rows.push(row.join(",")); });
+    const blob=new Blob([rows.join("\n")],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='investor_ledger.csv'; a.click(); URL.revokeObjectURL(url); showToast("CSV downloaded");
+  }
+
+  // ── Auth ──
+  function showLogin(){ document.getElementById('loginOverlay').style.display='flex'; document.querySelector('.ledger-root').style.display='none'; }
+  function showApp(){   document.getElementById('loginOverlay').style.display='none';  document.querySelector('.ledger-root').style.display=''; loadData(); }
+
+  async function handleLogin(){
+    const email=document.getElementById('loginEmail').value.trim(), password=document.getElementById('loginPassword').value;
+    const errEl=document.getElementById('loginError'), btn=document.getElementById('loginBtn');
+    errEl.textContent=''; btn.textContent='Signing in…'; btn.disabled=true;
+    const { error } = await _supabase.auth.signInWithPassword({ email, password });
+    btn.textContent='Sign in'; btn.disabled=false;
+    if(error){ errEl.textContent=error.message; } else { showApp(); }
+  }
+
+  document.getElementById('loginBtn').addEventListener('click', handleLogin);
+  document.getElementById('loginPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') handleLogin(); });
+  document.getElementById('signOutBtn').addEventListener('click', async ()=>{ await _supabase.auth.signOut(); showLogin(); });
+
+  $("#addNewBtn").addEventListener('click',()=>openForm(null));
+  $("#exportBtn").addEventListener('click',exportCSV);
+  $("#clearAllBtn").addEventListener('click',clearAll);
+  $("#searchInput").addEventListener('input',render);
+  $("#typeFilter").addEventListener('change',render);
+  $("#sectorFilter").addEventListener('change',render);
+  $("#companyFilter").addEventListener('change',render);
+  $("#statusFilter").addEventListener('change',render);
+  $("#sortBy").addEventListener('change',render);
+
+  // Exposed so the Supabase config script can call it after _supabase is ready
+  window._startApp = async function(){
+    const { data: { session } } = await _supabase.auth.getSession();
+    if(session){ showApp(); } else { showLogin(); }
+  };
+})();
+</script>
+
+<!-- ── Supabase config — replace the two values marked REPLACE ── -->
+<script>
+  const SUPABASE_URL      = 'https://egezaahjesezmyyaqcno.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVnZXphYWhqZXNlem15eWFxY25vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2NDk0OTYsImV4cCI6MjEwMzIyNTQ5Nn0.n9ApP0-ithPbVAeumecCaCaqdNZV6wyPZFiyWjQkXvo';
+
+  const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  window.storage = {
+    async get(key) {
+      const { data } = await _supabase
+        .from('kv_store')
+        .select('value')
+        .eq('key', key)
+        .maybeSingle();
+      return data ? { value: data.value } : null;
+    },
+    async set(key, value) {
+      const { error } = await _supabase
+        .from('kv_store')
+        .upsert({ key, value });
+      if (error) throw error;
+    }
+  };
+
+  window._startApp();
+</script>
+</body>
+</html>
