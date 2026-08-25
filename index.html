@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The Investor Ledger</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body style="margin:0;padding:0;background:#16232E;">
 
@@ -65,7 +66,7 @@
         <option value="lastContact">Last contact</option>
       </select>
       <button class="btn btn-primary" id="addNewBtn">+ Add investor</button>
-      <button class="btn btn-ghost" id="exportBtn">Export CSV</button>
+      <button class="btn btn-ghost" id="exportBtn">Export Excel</button>
     </div>
 
     <div class="panel" id="formPanel" style="display:none;"></div>
@@ -358,12 +359,28 @@
     investors=[]; await saveInvestors(); render(); showToast("Ledger cleared");
   }
 
-  function exportCSV(){
+  function exportExcel(){
     if(!investors.length){ showToast("Nothing to export yet"); return; }
-    const cols=["name","firm","contact","source","type","sectors","ticketSize","stage","status","dateAdded","lastContact","notes","companiesPitched"];
-    const rows=[cols.join(",")];
-    investors.forEach(inv=>{ const row=cols.map(c=>{ let v; if(c==='sectors') v=(inv.sectors||[]).join('; '); else if(c==='companiesPitched') v=(inv.engagements||[]).map(e=>`${e.company} [${e.status}]${e.notes?' - '+e.notes:''}`).join(' | '); else v=(inv[c]||''); return `"${String(v).replace(/"/g,'""')}"`; }); rows.push(row.join(",")); });
-    const blob=new Blob([rows.join("\n")],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='investor_ledger.csv'; a.click(); URL.revokeObjectURL(url); showToast("CSV downloaded");
+    const rows = investors.map(inv => ({
+      'Name':              inv.name        || '',
+      'Firm':              inv.firm        || '',
+      'Contact':           inv.contact     || '',
+      'Source':            inv.source      || '',
+      'Type':              inv.type        || '',
+      'Sectors':           (inv.sectors    || []).join('; '),
+      'Ticket Size':       inv.ticketSize  || '',
+      'Stage':             inv.stage       || '',
+      'Status':            inv.status      || '',
+      'Date Added':        inv.dateAdded   || '',
+      'Last Contact':      inv.lastContact || '',
+      'Notes':             inv.notes       || '',
+      'Companies Pitched': (inv.engagements||[]).map(e=>`${e.company} [${e.status}]${e.notes?' - '+e.notes:''}`).join(' | ')
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Investors');
+    XLSX.writeFile(wb, 'investor_ledger.xlsx');
+    showToast("Excel downloaded");
   }
 
   // ── Auth ──
@@ -384,7 +401,7 @@
   document.getElementById('signOutBtn').addEventListener('click', async ()=>{ await _supabase.auth.signOut(); showLogin(); });
 
   $("#addNewBtn").addEventListener('click',()=>openForm(null));
-  $("#exportBtn").addEventListener('click',exportCSV);
+  $("#exportBtn").addEventListener('click',exportExcel);
   $("#clearAllBtn").addEventListener('click',clearAll);
   $("#searchInput").addEventListener('input',render);
   $("#typeFilter").addEventListener('change',render);
