@@ -41,7 +41,7 @@
 
   <div class="ledger-body">
     <div class="toolbar">
-      <input type="text" id="searchInput" placeholder="Search by name, firm, company, or notes...">
+      <input type="text" id="searchInput" placeholder="Search by name, firm, email, mobile, company, or notes...">
       <select id="typeFilter">
         <option value="all">All types</option>
         <option value="Equity">Equity</option>
@@ -83,6 +83,8 @@
 </div>
 
 <datalist id="companyDatalist"></datalist>
+<datalist id="assigneeDatalist"></datalist>
+<datalist id="inputPartnerDatalist"></datalist>
 <div class="toast" id="toast"></div>
 
 <style>
@@ -143,7 +145,10 @@
   .investor-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}
   .investor-name{font-family:var(--font-display);font-size:17px;font-weight:600;margin:0;}
   .investor-firm{font-size:12.5px;color:var(--ink-soft);margin-top:1px;}
-  .investor-contact{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  .investor-contact{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft);margin-top:4px;line-height:1.7;}
+  .investor-contact a{color:inherit;text-decoration:none;border-bottom:1px dotted rgba(60,74,86,0.35);}
+  .investor-contact a:hover{color:var(--ink);border-bottom-color:var(--ink);}
+  .contact-sep{opacity:0.4;padding:0 3px;}
   .badge-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
   .type-badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:3px;text-transform:uppercase;letter-spacing:0.04em;}
   .type-badge.equity{background:var(--equity-bg);color:var(--equity);}
@@ -171,6 +176,11 @@
   .form-eg-row input,.form-eg-row select{font-size:12.5px;padding:7px 8px;border:1px solid var(--line);border-radius:4px;}
   .form-eg-row button{background:transparent;border:1px solid var(--line);color:var(--danger);border-radius:4px;font-size:12px;padding:7px 9px;cursor:pointer;height:100%;}
   .add-eg-btn{font-size:12.5px;padding:7px 12px;border-radius:4px;border:1px solid var(--line);background:#fff;cursor:pointer;margin-top:2px;}
+  .contact-row{display:flex;gap:6px;margin-bottom:6px;}
+  .contact-row input{flex:1 1 0;min-width:0;}
+  .contact-row button{background:transparent;border:1px solid var(--line);color:var(--danger);border-radius:4px;font-size:12px;padding:0 10px;cursor:pointer;flex:none;}
+  .contact-row button:hover{background:#fff;}
+  .add-contact-btn{font-size:12px;padding:6px 10px;border-radius:4px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--ink-soft);}
   .empty-state{text-align:center;padding:50px 20px;color:var(--ink-soft);}
   .empty-state h4{font-family:var(--font-display);font-size:19px;color:var(--ink);margin-bottom:6px;}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:4px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:50;}
@@ -197,6 +207,7 @@
 
   let investors = [], customSectors = [], companies = [];
   let editingId = null, selectedSectors = [], selectedType = "Equity", formEngagements = [], loaded = false;
+  let formEmails = [], formMobiles = [];
 
   const $ = (sel) => document.querySelector(sel);
   const listContainer = $("#listContainer");
@@ -213,13 +224,48 @@
   function uid(prefix){ return (prefix||'id')+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,8); }
   function allSectors(){ return Array.from(new Set([...DEFAULT_SECTORS,...customSectors])); }
 
+  // ── Multi-value contacts ──
+  function splitList(v){ return String(v==null?'':v).split(/[,;\n]/).map(x=>x.trim()).filter(Boolean); }
+  function dedupe(arr){ const seen=new Set(); return arr.filter(v=>{ const k=v.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; }); }
+
+  // Older records (and older exported sheets) kept one free-text field holding both
+  function splitContact(str){
+    const emails=[], mobiles=[];
+    splitList(str).forEach(v=>{ (v.includes('@')?emails:mobiles).push(v); });
+    return { emails, mobiles };
+  }
+
+  // Returns true if the record had to be migrated, so the caller can persist it
+  function normalizeInvestor(inv){
+    if(!Array.isArray(inv.engagements)) inv.engagements=[];
+    if(!Array.isArray(inv.emails))      inv.emails=[];
+    if(!Array.isArray(inv.mobiles))     inv.mobiles=[];
+    if(!inv.contact) return false;
+    const { emails, mobiles } = splitContact(inv.contact);
+    inv.emails  = dedupe([...inv.emails,  ...emails]);
+    inv.mobiles = dedupe([...inv.mobiles, ...mobiles]);
+    delete inv.contact;
+    return true;
+  }
+
+  function telHref(m){ return String(m).replace(/[^\d+]/g,''); }
+  function contactHtml(inv){
+    const parts=[
+      ...(inv.emails ||[]).map(e=>`<a href="mailto:${escA(e)}">${escH(e)}</a>`),
+      ...(inv.mobiles||[]).map(m=>`<a href="tel:${escA(telHref(m))}">${escH(m)}</a>`)
+    ];
+    return parts.length ? parts.join('<span class="contact-sep">·</span>') : 'no contact on file';
+  }
+
   async function loadData(){
     listContainer.innerHTML = '<div class="empty-state">Loading your ledger...</div>';
-    try{ const r = await window.storage.get(STORAGE_KEY); investors = r&&r.value ? JSON.parse(r.value) : []; investors.forEach(i=>{ if(!Array.isArray(i.engagements)) i.engagements=[]; }); }catch(e){ investors=[]; }
+    let migrated=false;
+    try{ const r = await window.storage.get(STORAGE_KEY); investors = r&&r.value ? JSON.parse(r.value) : []; investors.forEach(i=>{ if(normalizeInvestor(i)) migrated=true; }); }catch(e){ investors=[]; }
     try{ const r = await window.storage.get(SECTOR_KEY);  customSectors = r&&r.value ? JSON.parse(r.value) : []; }catch(e){ customSectors=[]; }
     try{ const r = await window.storage.get(COMPANY_KEY); companies = r&&r.value ? JSON.parse(r.value) : []; }catch(e){ companies=[]; }
+    if(migrated) await saveInvestors();
     loaded = true;
-    populateSectorFilter(); populateCompanyFilter(); populateCompanyDatalist(); render();
+    populateSectorFilter(); populateCompanyFilter(); populateCompanyDatalist(); populatePeopleDatalists(); render();
   }
 
   async function saveInvestors(){ try{ await window.storage.set(STORAGE_KEY, JSON.stringify(investors)); }catch(e){ showToast("Couldn't save — try again"); } }
@@ -239,6 +285,12 @@
   function populateCompanyDatalist(){
     document.getElementById('companyDatalist').innerHTML = companies.map(c=>`<option value="${escA(c)}">`).join('');
   }
+  // Derived from the ledger itself — no separate store to keep in sync
+  function peopleIn(key){ return Array.from(new Set(investors.map(i=>String(i[key]||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b)); }
+  function populatePeopleDatalists(){
+    document.getElementById('assigneeDatalist').innerHTML     = peopleIn('assignedTo'  ).map(v=>`<option value="${escA(v)}">`).join('');
+    document.getElementById('inputPartnerDatalist').innerHTML = peopleIn('inputPartner').map(v=>`<option value="${escA(v)}">`).join('');
+  }
 
   function escH(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function escA(s){ return escH(s); }
@@ -255,7 +307,12 @@
   function getFiltered(){
     const q=$("#searchInput").value.trim().toLowerCase(), typeF=$("#typeFilter").value, sectorF=$("#sectorFilter").value, companyF=$("#companyFilter").value, statusF=$("#statusFilter").value, sortBy=$("#sortBy").value;
     let list=investors.filter(inv=>{
-      if(q){ const h=[inv.name,inv.firm,inv.notes,inv.contact,(inv.engagements||[]).map(e=>e.company).join(' ')].join(' ').toLowerCase(); if(!h.includes(q)) return false; }
+      if(q){
+        const h=[inv.name,inv.firm,inv.notes,inv.assignedTo,inv.inputPartner,(inv.emails||[]).join(' '),(inv.mobiles||[]).join(' '),(inv.engagements||[]).map(e=>e.company).join(' ')].join(' ').toLowerCase();
+        // "98200 11223" should still find "+91 98200 11223"
+        const qd=q.replace(/\D/g,'');
+        if(!h.includes(q) && !(qd && (inv.mobiles||[]).some(m=>m.replace(/\D/g,'').includes(qd)))) return false;
+      }
       if(typeF!=="all"&&inv.type!==typeF) return false;
       if(sectorF!=="all"&&!(inv.sectors||[]).includes(sectorF)) return false;
       if(companyF!=="all"&&!(inv.engagements||[]).some(e=>e.company===companyF)) return false;
@@ -279,12 +336,14 @@
         <div class="investor-top"><div>
           <p class="investor-name">${escH(inv.name||'Unnamed')}</p>
           <div class="investor-firm">${escH(inv.firm||'—')}</div>
-          <div class="investor-contact">${escH(inv.contact||'no contact on file')}</div>
+          <div class="investor-contact">${contactHtml(inv)}</div>
         </div></div>
         <div class="badge-row" style="margin-top:10px;">
           <span class="type-badge ${typeClass(inv.type)}">${escH(inv.type)}</span>
           <span class="stamp ${stampClass(inv.status)}">${escH(inv.status)}</span>
           ${inv.source?`<span class="sector-tag">via ${escH(inv.source)}</span>`:''}
+          ${inv.assignedTo?`<span class="sector-tag">Assigned: ${escH(inv.assignedTo)}</span>`:''}
+          ${inv.inputPartner?`<span class="sector-tag">Input partner: ${escH(inv.inputPartner)}</span>`:''}
         </div>
         ${(inv.sectors||[]).length?`<div class="sector-tags">${inv.sectors.map(s=>`<span class="sector-tag">${escH(s)}</span>`).join('')}</div>`:''}
         <div class="investor-meta-row">
@@ -314,6 +373,40 @@
     wrap.querySelectorAll('[data-remove-row]').forEach(b=>b.addEventListener('click',()=>{ formEngagements=formEngagements.filter(e=>e.rowId!==b.getAttribute('data-remove-row')); renderEngagementRows(); }));
   }
 
+  const CONTACT_KINDS = {
+    email:  { get:()=>formEmails,  wrap:'emailRowsWrap',  type:'text', placeholder:'name@example.com'  },
+    mobile: { get:()=>formMobiles, wrap:'mobileRowsWrap', type:'tel',  placeholder:'+91 98200 11223'   }
+  };
+  function contactRow(value){ return { rowId:uid('c'), value:value||'' }; }
+
+  function renderContactRows(kind, focusRowId){
+    const cfg=CONTACT_KINDS[kind], rows=cfg.get(), wrap=document.getElementById(cfg.wrap);
+    if(!wrap) return;
+    if(!rows.length) rows.push(contactRow(''));
+    wrap.innerHTML=rows.map(r=>`<div class="contact-row" data-row="${r.rowId}"><input type="${cfg.type}" value="${escA(r.value)}" placeholder="${cfg.placeholder}"><button type="button" data-remove="${r.rowId}" title="Remove">✕</button></div>`).join('');
+    wrap.querySelectorAll('.contact-row').forEach(rowEl=>{
+      const rid=rowEl.getAttribute('data-row'), inp=rowEl.querySelector('input');
+      const at=()=>rows.findIndex(r=>r.rowId===rid);
+      inp.addEventListener('input',()=>{ const r=rows[at()]; if(r) r.value=inp.value; });
+      inp.addEventListener('keydown',e=>{ if(e.key!=='Enter') return; e.preventDefault(); const fresh=contactRow(''); rows.splice(at()+1,0,fresh); renderContactRows(kind,fresh.rowId); });
+      // Pasting "a@x.com, b@y.com" fills one row per value, matching the import format
+      inp.addEventListener('paste',e=>{
+        const parts=splitList(((e.clipboardData||window.clipboardData)||{getData:()=>''}).getData('text'));
+        if(parts.length<2) return;
+        e.preventDefault();
+        const built=parts.map(v=>contactRow(v));
+        rows.splice(at(),1,...built);
+        renderContactRows(kind,built[built.length-1].rowId);
+      });
+      rowEl.querySelector('[data-remove]').addEventListener('click',()=>{ rows.splice(at(),1); renderContactRows(kind); });
+    });
+    if(focusRowId){
+      const el=wrap.querySelector('.contact-row[data-row="'+focusRowId+'"] input');
+      if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(err){} }
+    }
+  }
+  function addContactRow(kind){ const rows=CONTACT_KINDS[kind].get(), fresh=contactRow(''); rows.push(fresh); renderContactRows(kind,fresh.rowId); }
+
   function addEngagementRow(){ formEngagements.push({rowId:uid('row'),company:'',status:'Not Yet Pitched',dateContacted:'',notes:''}); renderEngagementRows(); }
 
   function openForm(id){
@@ -322,13 +415,17 @@
     selectedSectors=inv?[...(inv.sectors||[])]:[];
     selectedType=inv?inv.type:"Equity";
     formEngagements=inv?(inv.engagements||[]).map(e=>({...e,rowId:uid('row')})):[];
+    formEmails =inv?(inv.emails ||[]).map(v=>contactRow(v)):[];
+    formMobiles=inv?(inv.mobiles||[]).map(v=>contactRow(v)):[];
     formPanel.style.display='block';
-    formPanel.innerHTML=`<h3>${inv?'Edit investor':'Add investor'}</h3><div class="form-grid"><div class="field"><label>Name *</label><input type="text" id="f_name" value="${inv?escA(inv.name||''):''}" placeholder="e.g. Rahul Mehta"></div><div class="field"><label>Firm / Fund</label><input type="text" id="f_firm" value="${inv?escA(inv.firm||''):''}" placeholder="e.g. Blue Harbor Capital"></div><div class="field"><label>Email / Phone</label><input type="text" id="f_contact" value="${inv?escA(inv.contact||''):''}" placeholder="email@example.com"></div><div class="field"><label>Source</label><select id="f_source">${SOURCES.map(s=>`<option value="${s}" ${inv&&inv.source===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field full"><label>Looking for</label><div class="type-toggle" id="typeToggle"><label class="${selectedType==='Equity'?'active-equity':''}" data-type="Equity"><input type="radio" name="ftype" ${selectedType==='Equity'?'checked':''}> Equity</label><label class="${selectedType==='Debt'?'active-debt':''}" data-type="Debt"><input type="radio" name="ftype" ${selectedType==='Debt'?'checked':''}> Debt</label><label class="${selectedType==='Both'?'active-both':''}" data-type="Both"><input type="radio" name="ftype" ${selectedType==='Both'?'checked':''}> Both</label></div></div><div class="field"><label>Ticket size</label><input type="text" id="f_ticket" value="${inv?escA(inv.ticketSize||''):''}" placeholder="e.g. $1–5M"></div><div class="field"><label>Stage / Preference</label><input type="text" id="f_stage" value="${inv?escA(inv.stage||''):''}" placeholder="e.g. Series A"></div><div class="field"><label>Overall status</label><select id="f_status">${INVESTOR_STATUSES.map(s=>`<option value="${s}" ${inv&&inv.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Last contact date</label><input type="date" id="f_lastcontact" value="${inv?escA(inv.lastContact||''):''}"></div><div class="field full"><label>Sectoral interests</label><div class="sector-chips" id="sectorChipsWrap"></div><div class="add-sector-row"><input type="text" id="f_newsector" placeholder="Add a custom sector and press Enter"><button type="button" id="addSectorBtn">Add</button></div></div><div class="field full"><label>General notes</label><textarea id="f_notes" placeholder="Context from the email/WhatsApp thread...">${inv?escH(inv.notes||''):''}</textarea></div></div><h4>Companies pitched to this investor</h4><div id="engagementRowsWrap"></div><button type="button" class="add-eg-btn" id="addEgBtn">+ Add a company</button><div class="form-actions"><button class="btn btn-ghost" id="cancelFormBtn">Cancel</button><button class="btn btn-primary" id="saveFormBtn">${inv?'Save changes':'Add investor'}</button></div>`;
-    renderSectorChips(); renderEngagementRows();
+    formPanel.innerHTML=`<h3>${inv?'Edit investor':'Add investor'}</h3><div class="form-grid"><div class="field"><label>Name *</label><input type="text" id="f_name" value="${inv?escA(inv.name||''):''}" placeholder="e.g. Rahul Mehta"></div><div class="field"><label>Firm / Fund</label><input type="text" id="f_firm" value="${inv?escA(inv.firm||''):''}" placeholder="e.g. Blue Harbor Capital"></div><div class="field"><label>Emails</label><div id="emailRowsWrap"></div><button type="button" class="add-contact-btn" id="addEmailBtn">+ Add another email</button></div><div class="field"><label>Mobiles</label><div id="mobileRowsWrap"></div><button type="button" class="add-contact-btn" id="addMobileBtn">+ Add another mobile</button></div><div class="field"><label>Assigned to</label><input type="text" id="f_assigned" list="assigneeDatalist" value="${inv?escA(inv.assignedTo||''):''}" placeholder="Who owns this relationship?"></div><div class="field"><label>Input partner</label><input type="text" id="f_inputpartner" list="inputPartnerDatalist" value="${inv?escA(inv.inputPartner||''):''}" placeholder="Who brought this contact in?"></div><div class="field"><label>Source</label><select id="f_source">${SOURCES.map(s=>`<option value="${s}" ${inv&&inv.source===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field full"><label>Looking for</label><div class="type-toggle" id="typeToggle"><label class="${selectedType==='Equity'?'active-equity':''}" data-type="Equity"><input type="radio" name="ftype" ${selectedType==='Equity'?'checked':''}> Equity</label><label class="${selectedType==='Debt'?'active-debt':''}" data-type="Debt"><input type="radio" name="ftype" ${selectedType==='Debt'?'checked':''}> Debt</label><label class="${selectedType==='Both'?'active-both':''}" data-type="Both"><input type="radio" name="ftype" ${selectedType==='Both'?'checked':''}> Both</label></div></div><div class="field"><label>Ticket size</label><input type="text" id="f_ticket" value="${inv?escA(inv.ticketSize||''):''}" placeholder="e.g. $1–5M"></div><div class="field"><label>Stage / Preference</label><input type="text" id="f_stage" value="${inv?escA(inv.stage||''):''}" placeholder="e.g. Series A"></div><div class="field"><label>Overall status</label><select id="f_status">${INVESTOR_STATUSES.map(s=>`<option value="${s}" ${inv&&inv.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Last contact date</label><input type="date" id="f_lastcontact" value="${inv?escA(inv.lastContact||''):''}"></div><div class="field full"><label>Sectoral interests</label><div class="sector-chips" id="sectorChipsWrap"></div><div class="add-sector-row"><input type="text" id="f_newsector" placeholder="Add a custom sector and press Enter"><button type="button" id="addSectorBtn">Add</button></div></div><div class="field full"><label>General notes</label><textarea id="f_notes" placeholder="Context from the email/WhatsApp thread...">${inv?escH(inv.notes||''):''}</textarea></div></div><h4>Companies pitched to this investor</h4><div id="engagementRowsWrap"></div><button type="button" class="add-eg-btn" id="addEgBtn">+ Add a company</button><div class="form-actions"><button class="btn btn-ghost" id="cancelFormBtn">Cancel</button><button class="btn btn-primary" id="saveFormBtn">${inv?'Save changes':'Add investor'}</button></div>`;
+    renderSectorChips(); renderEngagementRows(); renderContactRows('email'); renderContactRows('mobile');
     formPanel.querySelectorAll('#typeToggle label').forEach(lbl=>lbl.addEventListener('click',()=>{ selectedType=lbl.getAttribute('data-type'); formPanel.querySelectorAll('#typeToggle label').forEach(l=>l.classList.remove('active-equity','active-debt','active-both')); lbl.classList.add(selectedType==='Equity'?'active-equity':selectedType==='Debt'?'active-debt':'active-both'); }));
     document.getElementById('addSectorBtn').addEventListener('click',addCustomSector);
     document.getElementById('f_newsector').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();addCustomSector();} });
     document.getElementById('addEgBtn').addEventListener('click',addEngagementRow);
+    document.getElementById('addEmailBtn').addEventListener('click',()=>addContactRow('email'));
+    document.getElementById('addMobileBtn').addEventListener('click',()=>addContactRow('mobile'));
     document.getElementById('cancelFormBtn').addEventListener('click',closeForm);
     document.getElementById('saveFormBtn').addEventListener('click',submitForm);
     formPanel.scrollIntoView({behavior:'smooth',block:'start'});
@@ -341,16 +438,18 @@
     input.value=''; renderSectorChips();
   }
 
-  function closeForm(){ formPanel.style.display='none'; formPanel.innerHTML=''; editingId=null; formEngagements=[]; }
+  function closeForm(){ formPanel.style.display='none'; formPanel.innerHTML=''; editingId=null; formEngagements=[]; formEmails=[]; formMobiles=[]; }
 
   async function submitForm(){
     const name=document.getElementById('f_name').value.trim(); if(!name){ showToast("Name is required"); return; }
+    const emails =dedupe(formEmails .flatMap(r=>splitList(r.value)));
+    const mobiles=dedupe(formMobiles.flatMap(r=>splitList(r.value)));
     const cleanEg=formEngagements.filter(e=>e.company&&e.company.trim()).map(e=>({id:e.id||uid('eg'),company:e.company.trim(),status:e.status||'Not Yet Pitched',dateContacted:e.dateContacted||'',notes:(e.notes||'').trim()}));
     let newCo=false; cleanEg.forEach(e=>{ if(!companies.includes(e.company)){companies.push(e.company);newCo=true;} });
     if(newCo){ await saveCompanies(); populateCompanyFilter(); populateCompanyDatalist(); }
-    const data={ id:editingId||uid('inv'), name, firm:document.getElementById('f_firm').value.trim(), contact:document.getElementById('f_contact').value.trim(), source:document.getElementById('f_source').value, type:selectedType, sectors:[...selectedSectors], ticketSize:document.getElementById('f_ticket').value.trim(), stage:document.getElementById('f_stage').value.trim(), status:document.getElementById('f_status').value, lastContact:document.getElementById('f_lastcontact').value, notes:document.getElementById('f_notes').value.trim(), engagements:cleanEg, dateAdded:editingId?(investors.find(i=>i.id===editingId)||{}).dateAdded:new Date().toISOString().slice(0,10) };
+    const data={ id:editingId||uid('inv'), name, firm:document.getElementById('f_firm').value.trim(), emails, mobiles, source:document.getElementById('f_source').value, assignedTo:document.getElementById('f_assigned').value.trim(), inputPartner:document.getElementById('f_inputpartner').value.trim(), type:selectedType, sectors:[...selectedSectors], ticketSize:document.getElementById('f_ticket').value.trim(), stage:document.getElementById('f_stage').value.trim(), status:document.getElementById('f_status').value, lastContact:document.getElementById('f_lastcontact').value, notes:document.getElementById('f_notes').value.trim(), engagements:cleanEg, dateAdded:editingId?(investors.find(i=>i.id===editingId)||{}).dateAdded:new Date().toISOString().slice(0,10) };
     if(editingId){ investors=investors.map(i=>i.id===editingId?data:i); showToast("Investor updated"); } else { investors.unshift(data); showToast("Investor added"); }
-    await saveInvestors(); populateSectorFilter(); closeForm(); render();
+    await saveInvestors(); populateSectorFilter(); populatePeopleDatalists(); closeForm(); render();
   }
 
   async function deleteInvestor(id){
@@ -369,8 +468,11 @@
     const rows = investors.map(inv => ({
       'Name':              inv.name        || '',
       'Firm':              inv.firm        || '',
-      'Contact':           inv.contact     || '',
+      'Email':             (inv.emails     || []).join(', '),
+      'Mobile':            (inv.mobiles    || []).join(', '),
       'Source':            inv.source      || '',
+      'Assigned To':       inv.assignedTo  || '',
+      'Input Partner':     inv.inputPartner|| '',
       'Type':              inv.type        || '',
       'Sectors':           (inv.sectors    || []).join('; '),
       'Ticket Size':       inv.ticketSize  || '',
@@ -420,11 +522,18 @@
   function rowToInvestor(row){
     const r=normRow(row);
     const name=firstOf(r,'name','investorname','investor'); if(!name) return null;
+    let emails =splitList(firstOf(r,'email','emails','emailid','emailids','emailaddress','emailaddresses'));
+    let mobiles=splitList(firstOf(r,'mobile','mobiles','mobileno','mobilenumber','mobilenumbers','phone','phones','phonenumber','phonenumbers','contactnumber','contactnumbers'));
+    // Sheets exported before the split carry one combined "Contact" column
+    if(!emails.length&&!mobiles.length){ const c=splitContact(firstOf(r,'contact','emailphone','contactdetails')); emails=c.emails; mobiles=c.mobiles; }
     return {
       name,
       firm:        firstOf(r,'firm','fund','firmfund'),
-      contact:     firstOf(r,'contact','emailphone','email','phone'),
+      emails:      dedupe(emails),
+      mobiles:     dedupe(mobiles),
       source:      oneOf(firstOf(r,'source','via'),SOURCES,'Other'),
+      assignedTo:  firstOf(r,'assignedto','assigned','assignedtoname','assignee','owner'),
+      inputPartner:firstOf(r,'inputpartner','inputpartnername','input','partner','sourcedby','introducedby'),
       type:        oneOf(firstOf(r,'type','lookingfor'),INVESTOR_TYPES,'Equity'),
       sectors:     firstOf(r,'sectors','sector','sectoralinterests').split(/[;,]/).map(x=>x.trim()).filter(Boolean),
       ticketSize:  firstOf(r,'ticketsize','ticket'),
@@ -469,7 +578,7 @@
       await saveInvestors();
       if(newSectors) await saveCustomSectors();
       if(newCompanies){ await saveCompanies(); populateCompanyFilter(); populateCompanyDatalist(); }
-      populateSectorFilter(); render();
+      populateSectorFilter(); populatePeopleDatalists(); render();
       showToast(`Imported — ${nNew} added, ${nUpd} updated`);
     };
     reader.readAsArrayBuffer(file);
