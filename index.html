@@ -67,6 +67,8 @@
       </select>
       <button class="btn btn-primary" id="addNewBtn">+ Add investor</button>
       <button class="btn btn-ghost" id="exportBtn">Export Excel</button>
+      <button class="btn btn-ghost" id="importBtn">Import Excel</button>
+      <input type="file" id="importFile" accept=".xlsx,.xls,.csv" style="display:none;">
     </div>
 
     <div class="panel" id="formPanel" style="display:none;"></div>
@@ -186,6 +188,9 @@
 (function(){
   const DEFAULT_SECTORS = ["Fintech","Healthtech","SaaS/B2B","Consumer/D2C","Agritech","Climate/CleanTech","Manufacturing","Deeptech","EdTech","Logistics","Real Estate","Media/Content"];
   const ENGAGEMENT_STATUSES = ["Not Yet Pitched","Pitched","In Discussion","Term Sheet","Committed","Declined"];
+  const INVESTOR_STATUSES   = ["New","Contacted","In Discussion","Term Sheet","Committed","Passed","Dormant"];
+  const INVESTOR_TYPES      = ["Equity","Debt","Both"];
+  const SOURCES             = ["Email","WhatsApp","Referral","LinkedIn","Event","Other"];
   const STORAGE_KEY = "investors:list";
   const SECTOR_KEY  = "investors:custom-sectors";
   const COMPANY_KEY = "investors:companies";
@@ -318,7 +323,7 @@
     selectedType=inv?inv.type:"Equity";
     formEngagements=inv?(inv.engagements||[]).map(e=>({...e,rowId:uid('row')})):[];
     formPanel.style.display='block';
-    formPanel.innerHTML=`<h3>${inv?'Edit investor':'Add investor'}</h3><div class="form-grid"><div class="field"><label>Name *</label><input type="text" id="f_name" value="${inv?escA(inv.name||''):''}" placeholder="e.g. Rahul Mehta"></div><div class="field"><label>Firm / Fund</label><input type="text" id="f_firm" value="${inv?escA(inv.firm||''):''}" placeholder="e.g. Blue Harbor Capital"></div><div class="field"><label>Email / Phone</label><input type="text" id="f_contact" value="${inv?escA(inv.contact||''):''}" placeholder="email@example.com"></div><div class="field"><label>Source</label><select id="f_source">${["Email","WhatsApp","Referral","LinkedIn","Event","Other"].map(s=>`<option value="${s}" ${inv&&inv.source===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field full"><label>Looking for</label><div class="type-toggle" id="typeToggle"><label class="${selectedType==='Equity'?'active-equity':''}" data-type="Equity"><input type="radio" name="ftype" ${selectedType==='Equity'?'checked':''}> Equity</label><label class="${selectedType==='Debt'?'active-debt':''}" data-type="Debt"><input type="radio" name="ftype" ${selectedType==='Debt'?'checked':''}> Debt</label><label class="${selectedType==='Both'?'active-both':''}" data-type="Both"><input type="radio" name="ftype" ${selectedType==='Both'?'checked':''}> Both</label></div></div><div class="field"><label>Ticket size</label><input type="text" id="f_ticket" value="${inv?escA(inv.ticketSize||''):''}" placeholder="e.g. $1–5M"></div><div class="field"><label>Stage / Preference</label><input type="text" id="f_stage" value="${inv?escA(inv.stage||''):''}" placeholder="e.g. Series A"></div><div class="field"><label>Overall status</label><select id="f_status">${["New","Contacted","In Discussion","Term Sheet","Committed","Passed","Dormant"].map(s=>`<option value="${s}" ${inv&&inv.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Last contact date</label><input type="date" id="f_lastcontact" value="${inv?escA(inv.lastContact||''):''}"></div><div class="field full"><label>Sectoral interests</label><div class="sector-chips" id="sectorChipsWrap"></div><div class="add-sector-row"><input type="text" id="f_newsector" placeholder="Add a custom sector and press Enter"><button type="button" id="addSectorBtn">Add</button></div></div><div class="field full"><label>General notes</label><textarea id="f_notes" placeholder="Context from the email/WhatsApp thread...">${inv?escH(inv.notes||''):''}</textarea></div></div><h4>Companies pitched to this investor</h4><div id="engagementRowsWrap"></div><button type="button" class="add-eg-btn" id="addEgBtn">+ Add a company</button><div class="form-actions"><button class="btn btn-ghost" id="cancelFormBtn">Cancel</button><button class="btn btn-primary" id="saveFormBtn">${inv?'Save changes':'Add investor'}</button></div>`;
+    formPanel.innerHTML=`<h3>${inv?'Edit investor':'Add investor'}</h3><div class="form-grid"><div class="field"><label>Name *</label><input type="text" id="f_name" value="${inv?escA(inv.name||''):''}" placeholder="e.g. Rahul Mehta"></div><div class="field"><label>Firm / Fund</label><input type="text" id="f_firm" value="${inv?escA(inv.firm||''):''}" placeholder="e.g. Blue Harbor Capital"></div><div class="field"><label>Email / Phone</label><input type="text" id="f_contact" value="${inv?escA(inv.contact||''):''}" placeholder="email@example.com"></div><div class="field"><label>Source</label><select id="f_source">${SOURCES.map(s=>`<option value="${s}" ${inv&&inv.source===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field full"><label>Looking for</label><div class="type-toggle" id="typeToggle"><label class="${selectedType==='Equity'?'active-equity':''}" data-type="Equity"><input type="radio" name="ftype" ${selectedType==='Equity'?'checked':''}> Equity</label><label class="${selectedType==='Debt'?'active-debt':''}" data-type="Debt"><input type="radio" name="ftype" ${selectedType==='Debt'?'checked':''}> Debt</label><label class="${selectedType==='Both'?'active-both':''}" data-type="Both"><input type="radio" name="ftype" ${selectedType==='Both'?'checked':''}> Both</label></div></div><div class="field"><label>Ticket size</label><input type="text" id="f_ticket" value="${inv?escA(inv.ticketSize||''):''}" placeholder="e.g. $1–5M"></div><div class="field"><label>Stage / Preference</label><input type="text" id="f_stage" value="${inv?escA(inv.stage||''):''}" placeholder="e.g. Series A"></div><div class="field"><label>Overall status</label><select id="f_status">${INVESTOR_STATUSES.map(s=>`<option value="${s}" ${inv&&inv.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Last contact date</label><input type="date" id="f_lastcontact" value="${inv?escA(inv.lastContact||''):''}"></div><div class="field full"><label>Sectoral interests</label><div class="sector-chips" id="sectorChipsWrap"></div><div class="add-sector-row"><input type="text" id="f_newsector" placeholder="Add a custom sector and press Enter"><button type="button" id="addSectorBtn">Add</button></div></div><div class="field full"><label>General notes</label><textarea id="f_notes" placeholder="Context from the email/WhatsApp thread...">${inv?escH(inv.notes||''):''}</textarea></div></div><h4>Companies pitched to this investor</h4><div id="engagementRowsWrap"></div><button type="button" class="add-eg-btn" id="addEgBtn">+ Add a company</button><div class="form-actions"><button class="btn btn-ghost" id="cancelFormBtn">Cancel</button><button class="btn btn-primary" id="saveFormBtn">${inv?'Save changes':'Add investor'}</button></div>`;
     renderSectorChips(); renderEngagementRows();
     formPanel.querySelectorAll('#typeToggle label').forEach(lbl=>lbl.addEventListener('click',()=>{ selectedType=lbl.getAttribute('data-type'); formPanel.querySelectorAll('#typeToggle label').forEach(l=>l.classList.remove('active-equity','active-debt','active-both')); lbl.classList.add(selectedType==='Equity'?'active-equity':selectedType==='Debt'?'active-debt':'active-both'); }));
     document.getElementById('addSectorBtn').addEventListener('click',addCustomSector);
@@ -374,13 +379,100 @@
       'Date Added':        inv.dateAdded   || '',
       'Last Contact':      inv.lastContact || '',
       'Notes':             inv.notes       || '',
-      'Companies Pitched': (inv.engagements||[]).map(e=>`${e.company} [${e.status}]${e.notes?' - '+e.notes:''}`).join(' | ')
+      'Companies Pitched': (inv.engagements||[]).map(e=>`${e.company} [${e.status}]${e.dateContacted?' ('+e.dateContacted+')':''}${e.notes?' - '+e.notes:''}`).join(' | ')
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Investors');
     XLSX.writeFile(wb, 'investor_ledger.xlsx');
     showToast("Excel downloaded");
+  }
+
+  // ── Excel import ──
+  function normKey(s){ return String(s).toLowerCase().replace(/[^a-z0-9]/g,''); }
+  function normRow(raw){ const o={}; Object.keys(raw).forEach(k=>{ o[normKey(k)]=raw[k]; }); return o; }
+  function rawOf(row,...keys){ for(const k of keys){ const v=row[k]; if(v!==undefined&&v!==null&&String(v).trim()!=='') return v; } return ''; }
+  function firstOf(row,...keys){ return String(rawOf(row,...keys)).trim(); }
+  function oneOf(val,list,fallback){ const v=String(val||'').trim(); if(!v) return fallback; return list.find(x=>x.toLowerCase()===v.toLowerCase())||fallback; }
+  function keyOf(name,firm){ return String(name||'').trim().toLowerCase()+'|'+String(firm||'').trim().toLowerCase(); }
+
+  function toDateStr(v){
+    if(v===undefined||v===null||v==='') return '';
+    const pad=n=>String(n).padStart(2,'0');
+    // Spreadsheet dates can land a millisecond either side of midnight — snap to the nearest day
+    const fmt=d=>{ const x=new Date(d.getTime()); if(x.getHours()>=12) x.setDate(x.getDate()+1); x.setHours(0,0,0,0); return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}`; };
+    if(v instanceof Date) return isNaN(v)?'':fmt(v);
+    const str=String(v).trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    if(/^\d+(\.\d+)?$/.test(str)){ const d=XLSX.SSF.parse_date_code(Number(str)); return d?`${d.y}-${pad(d.m)}-${pad(d.d)}`:''; }
+    const d=new Date(str); return isNaN(d)?'':fmt(d);
+  }
+
+  // "Acme [Pitched] (2026-01-04) - went well" — the date and notes are both optional
+  function parseEngagements(str){
+    return String(str||'').split('|').map(c=>c.trim()).filter(Boolean).map(chunk=>{
+      const m=chunk.match(/^(.*?)\s*\[([^\]]*)\]\s*(?:\(([^)]*)\))?\s*(?:-\s*([\s\S]*))?$/);
+      if(!m) return { id:uid('eg'), company:chunk, status:'Not Yet Pitched', dateContacted:'', notes:'' };
+      return { id:uid('eg'), company:(m[1]||'').trim(), status:oneOf(m[2],ENGAGEMENT_STATUSES,'Not Yet Pitched'), dateContacted:toDateStr(m[3]||''), notes:(m[4]||'').trim() };
+    }).filter(e=>e.company);
+  }
+
+  function rowToInvestor(row){
+    const r=normRow(row);
+    const name=firstOf(r,'name','investorname','investor'); if(!name) return null;
+    return {
+      name,
+      firm:        firstOf(r,'firm','fund','firmfund'),
+      contact:     firstOf(r,'contact','emailphone','email','phone'),
+      source:      oneOf(firstOf(r,'source','via'),SOURCES,'Other'),
+      type:        oneOf(firstOf(r,'type','lookingfor'),INVESTOR_TYPES,'Equity'),
+      sectors:     firstOf(r,'sectors','sector','sectoralinterests').split(/[;,]/).map(x=>x.trim()).filter(Boolean),
+      ticketSize:  firstOf(r,'ticketsize','ticket'),
+      stage:       firstOf(r,'stage','stagepreference'),
+      status:      oneOf(firstOf(r,'status','overallstatus'),INVESTOR_STATUSES,'New'),
+      dateAdded:   toDateStr(rawOf(r,'dateadded','added')),
+      lastContact: toDateStr(rawOf(r,'lastcontact','lastcontactdate')),
+      notes:       firstOf(r,'notes','generalnotes'),
+      engagements: parseEngagements(firstOf(r,'companiespitched','companies','engagements'))
+    };
+  }
+
+  function importExcel(file){
+    const reader=new FileReader();
+    reader.onerror=()=>showToast("Couldn't read that file");
+    reader.onload=async ev=>{
+      let rows=[];
+      try{
+        const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array',cellDates:true});
+        rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+      }catch(err){ showToast("That file isn't a readable spreadsheet"); return; }
+      const parsed=[]; let skipped=0;
+      rows.forEach(r=>{ const inv=rowToInvestor(r); inv?parsed.push(inv):skipped++; });
+      if(!parsed.length){ showToast(rows.length?"No rows had a Name — check the column headers":"That sheet is empty"); return; }
+
+      const existing=new Set(investors.map(i=>keyOf(i.name,i.firm))), seen=new Set();
+      let nNew=0, nUpd=0;
+      parsed.forEach(p=>{ const k=keyOf(p.name,p.firm); if(seen.has(k)) return; seen.add(k); existing.has(k)?nUpd++:nNew++; });
+      if(!confirm(`${parsed.length} row${parsed.length===1?'':'s'} — ${nNew} new, ${nUpd} to update${skipped?`, ${skipped} skipped (no name)`:''}. Import?`)) return;
+
+      const byKey=new Map(); investors.forEach(i=>byKey.set(keyOf(i.name,i.firm),i));
+      const today=new Date().toISOString().slice(0,10);
+      let newSectors=0, newCompanies=0;
+      parsed.forEach(p=>{
+        const k=keyOf(p.name,p.firm), ex=byKey.get(k);
+        if(ex){ Object.assign(ex,p,{id:ex.id,dateAdded:p.dateAdded||ex.dateAdded}); }
+        else { const inv={...p,id:uid('inv'),dateAdded:p.dateAdded||today}; investors.unshift(inv); byKey.set(k,inv); }
+        p.sectors.forEach(sec=>{ if(!allSectors().includes(sec)){ customSectors.push(sec); newSectors++; } });
+        p.engagements.forEach(e=>{ if(!companies.includes(e.company)){ companies.push(e.company); newCompanies++; } });
+      });
+
+      await saveInvestors();
+      if(newSectors) await saveCustomSectors();
+      if(newCompanies){ await saveCompanies(); populateCompanyFilter(); populateCompanyDatalist(); }
+      populateSectorFilter(); render();
+      showToast(`Imported — ${nNew} added, ${nUpd} updated`);
+    };
+    reader.readAsArrayBuffer(file);
   }
 
   // ── Auth ──
@@ -402,6 +494,8 @@
 
   $("#addNewBtn").addEventListener('click',()=>openForm(null));
   $("#exportBtn").addEventListener('click',exportExcel);
+  $("#importBtn").addEventListener('click',()=>$("#importFile").click());
+  $("#importFile").addEventListener('change',e=>{ const f=e.target.files[0]; if(f) importExcel(f); e.target.value=''; });
   $("#clearAllBtn").addEventListener('click',clearAll);
   $("#searchInput").addEventListener('input',render);
   $("#typeFilter").addEventListener('change',render);
